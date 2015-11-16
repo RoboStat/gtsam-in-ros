@@ -6,6 +6,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <fstream>
 
 #include "VisualOdometry.h"
 #include "GlobalVariables.h"
@@ -25,8 +26,13 @@ int main()
     visualOdometry.Initialize();
 
     for (int i=0;i<TOTAL_NUM_FRAMES;i++){
+        if (i == 640) {
+            waitKey(0);
+        }
         visualOdometry.Start();
     }
+
+    visualOdometry.PrintTrajectory("out.txt");
 
     waitKey(0);// wait for a keystroke in the window
     return 0;

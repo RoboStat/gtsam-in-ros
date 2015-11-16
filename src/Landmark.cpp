@@ -12,6 +12,8 @@ Landmark::Landmark(cv::KeyPoint kp_l, cv::KeyPoint kp_r, cv::Mat dscp_l, cv::Mat
     this->totalNumofLandmarks += 1;
     this->keypoint_l = kp_l;
     this->keypoint_r = kp_r;
+    this->traceHistory_l.push_back(kp_l);
+    this->traceHistory_r.push_back(kp_r);
     this->descriptor_l = dscp_l;
     this->descriptor_r = dscp_r;
 

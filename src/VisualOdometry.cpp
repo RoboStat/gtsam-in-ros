@@ -46,7 +46,7 @@ void VisualOdometry::FindNewLandmarks(std::vector <int>& newLandmarksInd)
     VisualizeLandmarks(image_l, image_r, landmarkCandidateSet);
 #endif // DEBUG
 
-    for (int i=0; i<landmarkCandidateSet.size(); i++){
+    for (unsigned int i=0; i<landmarkCandidateSet.size(); i++){
         this->landmarks.push_back(landmarkCandidateSet[i]);
         newLandmarksInd.push_back(landmarks.size()-1);
     }
@@ -118,7 +118,7 @@ void VisualOdometry::GridDetectAndMatch(cv::Mat image_l, cv::Mat image_r,
             MatchStereoFeatures(subKeyPoints_l, subDscp_l, subKeyPoints_r, subDscp_r, subLandmarkCandidateSet);
             //VisualizeLandmarks(image_l, image_r, subLandmarkCandidateSet);
 
-            for (int i=0; i<subLandmarkCandidateSet.size(); i++){
+            for (unsigned int i=0; i<subLandmarkCandidateSet.size(); i++){
                 landmarkCandidateSet.push_back(subLandmarkCandidateSet[i]);
             }
         }
@@ -187,7 +187,7 @@ void VisualOdometry::MatchStereoFeatures(std::vector <cv::KeyPoint> keyPointSet_
             std::cout << "inlier size: " << inliers1.size() << std::endl;
 #endif // DEBUG
 
-    for(int i = 0; i < inliers1.size(); i++) {
+    for(unsigned int i = 0; i < inliers1.size(); i++) {
         Landmark new_landmark (inliers1[i], inliers2[i], inlier_dscp1[i], inlier_dscp2[i]);
         landmarkCandidateSet.push_back(new_landmark);
     }
@@ -201,7 +201,7 @@ void VisualOdometry::FindFeatures(cv::Mat image,
                                  cv::Mat& dscp)
 {
     cv::Ptr<cv::ORB> detector = cv::ORB::create();
-    detector->setPatchSize(5);
+//    detector->setPatchSize(5);
     detector->setEdgeThreshold(1);
     detector->detectAndCompute(image,cv::noArray(), keypoints, dscp);
 //    for (int i=0;i<keypoints.size();i++){
@@ -250,7 +250,7 @@ void VisualOdometry::TrackFeatures(std::vector <Landmark>& active_landmarks, cv:
         return;
 
     std::vector <cv::Point2f> kp_l, kp_r, kp_l_last, kp_r_last;
-    for (int i=0;i<active_landmarks.size();i++){
+    for (unsigned int i=0;i<active_landmarks.size();i++){
         kp_l_last.push_back(active_landmarks[i].keypoint_l.pt);
         kp_r_last.push_back(active_landmarks[i].keypoint_r.pt);
 //        kp_l.push_back(active_landmarks[i].keypoint_l.pt);
@@ -258,8 +258,8 @@ void VisualOdometry::TrackFeatures(std::vector <Landmark>& active_landmarks, cv:
     }
     Mat status_l, err_l, status_r, err_r;
 
-    calcOpticalFlowPyrLK(i_l_last, i_l, kp_l_last, kp_l, status_l, err_l);
-    calcOpticalFlowPyrLK(i_r_last, i_r, kp_r_last, kp_r, status_r, err_r);
+    calcOpticalFlowPyrLK(i_l_last, i_l, kp_l_last, kp_l, status_l, err_l, Size(21, 21));
+    calcOpticalFlowPyrLK(i_r_last, i_r, kp_r_last, kp_r, status_r, err_r, Size(21, 21));
 
 #if DEBUG
     std::cout << err_l.size() << std::endl;
@@ -268,12 +268,118 @@ void VisualOdometry::TrackFeatures(std::vector <Landmark>& active_landmarks, cv:
     std::cout << kp_l_last[0] << " " << kp_l[0] << std::endl;
 #endif // DEBUG
 
-    for (int i=0; i<active_landmarks.size(); i++){
+    for (unsigned int i=0; i<active_landmarks.size(); i++){
         if (err_l.at<double>(i,1) < TRACKER_ERR_THRESHOLD && err_r.at<double>(i,1) < TRACKER_ERR_THRESHOLD){
-            landmarks[active_landmarks[i].id].UpdateKeypoint(kp_l[i], kp_r[i], num_of_frame);
-            remain_landmarks.push_back(i);
+            if (kp_l[i].x < 0 || kp_l[i].x > i_l.cols || kp_l[i].y < 0 || kp_l[i].y > i_l.rows ||
+                kp_r[i].x < 0 || kp_r[i].x > i_r.cols || kp_r[i].y < 0 || kp_r[i].y > i_r.rows) {
+                std::cout << "Throw away landmark " << kp_l[i] << "  " << kp_r[i] << std::endl;
+            }
+            else {
+                landmarks[active_landmarks[i].id].UpdateKeypoint(kp_l[i], kp_r[i], num_of_frame);
+                remain_landmarks.push_back(i);
+            }
         }
     }
+}
+
+void VisualOdometry::InitializeMotionEstimation()
+{
+    // Finding the Essential matrix
+    std::vector <cv::Point2f> points_l, points_r;
+    for (unsigned int i=0;i<landmarks.size();i++){
+        points_l.push_back(landmarks[i].keypoint_l.pt);
+        points_r.push_back(landmarks[i].keypoint_r.pt);
+    }
+
+    camera_essential_matrix = cv::findEssentialMat(points_l, points_r, camera_model.focalLength, camera_model.principalPoint);
+
+#if DEBUG
+    std::cout << "E: " << camera_essential_matrix << std::endl;
+    cv::Mat R, t;
+    recoverPose(camera_essential_matrix, points_l, points_r, R, t);
+    std::cout << "R: " << R << std::endl;
+    std::cout << "t: " << t << std::endl;
+#endif
+
+    cv::Mat identity = cv::Mat::eye(3, 3, CV_32F);
+    camera_R.push_back(identity);
+    camera_t.push_back(cv::Mat::zeros(3, 1, CV_32F));
+}
+
+void VisualOdometry::MotionEstimation(std::vector <int> landmarkInd)
+/*
+    landmarkInd stores the index of shared landmarks between last frame and this frame.
+*/
+{
+    cv::Mat proj;
+    std::vector <cv::Point2f> points_current_l, points_last_l, points_last_r;
+    for (unsigned int i=0;i<landmarkInd.size();i++){
+        int ind = landmarkInd[i];
+        points_current_l.push_back(landmarks[ind].keypoint_l.pt);
+        points_last_l.push_back(landmarks[ind].traceHistory_l.rbegin()[1].pt);
+        points_last_r.push_back(landmarks[ind].traceHistory_r.rbegin()[1].pt);
+    }
+
+    cv::Mat camera_matrix_l, camera_matrix_r;
+    cv::Mat rt_l, rt_r;
+    cv::Mat d = (cv::Mat_<float>(3,1) << -camera_model.baseline, 0, 0);
+
+    cv::hconcat(camera_R[num_of_frame-2], camera_t[num_of_frame-2], rt_l);
+    cv::hconcat(camera_R[num_of_frame-2], camera_t[num_of_frame-2] + camera_R[num_of_frame-2] * d, rt_r);
+
+    camera_matrix_l = camera_model.intrinsic*rt_l;
+    camera_matrix_r = camera_model.intrinsic*rt_r;
+
+#if DEBUG
+    std::cout << "[R t] left = " << rt_l << std::endl;
+    std::cout << "[R t] right = " << rt_r << std::endl;
+#endif // DEBUG
+
+    // Triangulate point in the last frame
+    cv::Mat points_last_4D;
+
+    // World frame triangulation method
+    // cv::triangulatePoints(camera_matrix_l, camera_matrix_r, points_last_l, points_last_r, points_last_4D);
+
+    // Incremental camera frame triangulation method
+    cv::hconcat(camera_R[0], camera_t[0], rt_l);
+    cv::hconcat(camera_R[0], camera_t[0] + d, rt_r);
+    camera_matrix_l = camera_model.intrinsic*rt_l;
+    camera_matrix_r = camera_model.intrinsic*rt_r;
+    cv::triangulatePoints(camera_matrix_l, camera_matrix_r, points_last_l, points_last_r, points_last_4D);
+
+    cv::Mat R_new_q, R_new_incremental, t_new_incremental, R_new, t_new;
+    std::vector <cv::Point3f> points_last_3D;
+    for (int i=0;i<points_last_4D.cols;i++) {
+        cv::Point3f pt;
+        pt.x =  points_last_4D.at<float>(0,i) / points_last_4D.at<float>(3,i);
+        pt.y = points_last_4D.at<float>(1,i) / points_last_4D.at<float>(3,i);
+        pt.z = points_last_4D.at<float>(2,i) / points_last_4D.at<float>(3,i);
+        points_last_3D.push_back(pt);
+    }
+
+    std::vector <double> distCoeffs;
+    cv::Mat pnpInliers;
+    cv::solvePnPRansac (points_last_3D, points_current_l, camera_model.intrinsic, distCoeffs, R_new_q, t_new_incremental, false, 100, 1.0, 0.98, pnpInliers);
+    cv::Rodrigues(R_new_q, R_new_incremental);
+    R_new_incremental.convertTo(R_new_incremental, CV_32F);
+    t_new_incremental.convertTo(t_new_incremental, CV_32F);
+    camera_R_incremental.push_back(R_new_incremental);
+    camera_t_incremental.push_back(t_new_incremental);
+
+    R_new = R_new_incremental*camera_R.back() ;
+    t_new = camera_t.back() + camera_R.back().inv()*t_new_incremental;
+    camera_R.push_back(R_new);
+    camera_t.push_back(t_new);
+
+#if DEBUG
+    cv::hconcat(R_new, t_new, proj);
+    std::cout << "PnP Total num of feature points: " << points_current_l.size() << "  PnP num of Inliers: " << pnpInliers.size() << std::endl;
+    std::cout << "New camera R: " << R_new << std::endl;
+    std::cout << "New camera t: " << t_new << std::endl;
+#endif
+
+    std::cout << "New camera matrix: " << proj << std::endl;
 }
 
 void VisualOdometry::Start()
@@ -289,19 +395,14 @@ void VisualOdometry::Start()
     std::vector <Landmark> active_landmarks;
     if (landmarkMap.size()>0){
         std::cout << "Num of item in landmark map " << num_of_frame - 2 << " is " << landmarkMap[num_of_frame-2].size() << std::endl;
-        for (int i=0;i<landmarkMap[num_of_frame-2].size();i++){
+        for (unsigned int i=0;i<landmarkMap[num_of_frame-2].size();i++){
             active_landmarks.push_back(landmarks[landmarkMap[num_of_frame-2][i]]);
         }
     }
 
 #if DEBUG
-//    for (int i=0;i<landmarks.size(); i++){
-//        std::cout << i << "  id: " << landmarks[i].id << std::endl;
-//   }
-
     std::cout << "Last number of active landmarks: " << num_of_landmarks_in_last_frame << std::endl;
     std::cout << "Number of active landmarks: " << active_landmarks.size() << std::endl;
-    VisualizeLandmarks(image_l, image_r, active_landmarks);
 #endif // DEBUG
 
     std::vector <int> remain_landmarks;
@@ -313,32 +414,49 @@ void VisualOdometry::Start()
 
 
     std::vector <int> landmarkInd;
-    for (int i=0; i<remain_landmarks.size(); i++){
+    for (unsigned int i=0; i<remain_landmarks.size(); i++){
         int ind = remain_landmarks[i];
         landmarkInd.push_back(active_landmarks[ind].id);
     }
 
-    num_of_landmarks_in_last_frame = active_landmarks.size();
+    num_of_landmarks_in_last_frame = remain_landmarks.size();
 
     // Check if new landmarks needed
     std::vector <int> newLandmarksInd;
     if (num_of_landmarks_in_last_frame < MIN_NUM_LANDMARKS){
-        FindNewLandmarks(newLandmarksInd);
+        std::cout << "New Key Frame. " << std::endl;
         key_frames.push_back(num_of_frame);
+
+        std::vector <int> landmarksInd_withNewLandmarks (landmarkInd.begin(), landmarkInd.end());
+        FindNewLandmarks(newLandmarksInd);
         for (auto it = newLandmarksInd.begin(); it != newLandmarksInd.end(); it++){
-            landmarkInd.push_back(*it);
+            landmarksInd_withNewLandmarks.push_back(*it);
         }
+        landmarkMap.push_back(landmarksInd_withNewLandmarks);
     }
-    landmarkMap.push_back(landmarkInd);
+    else {
+        landmarkMap.push_back(landmarkInd);
+    }
+
+    // Triangulation and motion estimation
+    if (num_of_frame == 1) {
+        InitializeMotionEstimation();
+    }
+    else {
+        MotionEstimation(landmarkInd);
+    }
+
+    VisualizeLandmarks(image_l, image_r, active_landmarks);
 }
 
 void VisualOdometry::VisualizeLandmarks(cv::Mat image_l, cv::Mat image_r,
                                         std::vector <Landmark> lm)
 {
     using namespace cv;
-    std::vector <cv::KeyPoint> inliers1, inliers2;
+    if (VISUALIZATION) {
+        std::vector <cv::KeyPoint> inliers1, inliers2;
     std::vector <cv::DMatch> good_matches;
-    for (int i=0; i<lm.size(); i++){
+    for (unsigned int i=0; i<lm.size(); i++){
         int new_i = static_cast<int>(inliers1.size());
         inliers1.push_back(lm[i].keypoint_l);
         inliers2.push_back(lm[i].keypoint_r);
@@ -350,14 +468,16 @@ void VisualOdometry::VisualizeLandmarks(cv::Mat image_l, cv::Mat image_r,
     namedWindow( "Display window", CV_WINDOW_AUTOSIZE );// create a window for display.
     imshow( "Display window", res );
     waitKey(0);
+    }
 }
 
 void VisualOdometry::VisualizeLandmarks(cv::Mat image_l, cv::Mat image_r,
                                         std::vector <cv::KeyPoint> inliers1, std::vector <cv::KeyPoint> inliers2)
 {
     using namespace cv;
-    std::vector <cv::DMatch> good_matches;
-    for (int i=0; i<inliers1.size(); i++){
+    if (VISUALIZATION) {
+        std::vector <cv::DMatch> good_matches;
+    for (unsigned int i=0; i<inliers1.size(); i++){
         good_matches.push_back(cv::DMatch(i, i, 0));
     }
 
@@ -366,5 +486,20 @@ void VisualOdometry::VisualizeLandmarks(cv::Mat image_l, cv::Mat image_r,
     namedWindow( "Display window", CV_WINDOW_AUTOSIZE );// create a window for display.
     imshow( "Display window", res );
     waitKey(0);
+    }
+}
+
+void VisualOdometry::PrintTrajectory(char* filename)
+{
+    std::ofstream myfile;
+    myfile.open (filename);
+
+    for (unsigned int i=0; i<camera_t.size(); i++) {
+        myfile << camera_t[i].at<float>(0) << " "
+               << camera_t[i].at<float>(1) << " "
+               << camera_t[i].at<float>(2) << " " << std::endl;
+    }
+
+    myfile.close();
 }
 

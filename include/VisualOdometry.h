@@ -9,8 +9,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <fstream>
 
 #include "Landmark.h"
+#include "camera.h"
 
 
 class VisualOdometry
@@ -34,6 +36,9 @@ class VisualOdometry
         void GridDetectAndMatch(cv::Mat image_l, cv::Mat image_r,
                                 std::vector <cv::KeyPoint>& keyPointSet_l, std::vector <cv::KeyPoint>& keyPointSet_r,
                                 cv::Mat& dscp_l, cv::Mat& dscp_r, std::vector <Landmark>& landmarkCandidateSet);
+        void InitializeMotionEstimation();
+        void MotionEstimation(std::vector <int> landmarkInd);
+        void PrintTrajectory(char* filename);
 
     protected:
         void FindFeatures(cv::Mat image,
@@ -51,10 +56,17 @@ class VisualOdometry
         std::vector <Landmark> landmarks;
         std::vector <std::vector <int> > landmarkMap; // Store the IDs of landmarks show up in each frame
         std::vector <int> key_frames;
+        cv::Mat camera_essential_matrix;
+        std::vector <cv::Mat> camera_R; // Left camera matrix
+        std::vector <cv::Mat> camera_t;
+        std::vector <cv::Mat> camera_R_incremental; // Left camera matrix
+        std::vector <cv::Mat> camera_t_incremental;
         cv::Mat image_l;
         cv::Mat image_r;
         cv::Mat image_l_last;
         cv::Mat image_r_last;
+
+        Camera camera_model;
 };
 
 #endif // VISUALODOMETRY_H
