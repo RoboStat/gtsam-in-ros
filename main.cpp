@@ -42,7 +42,7 @@ int main(int argc,char* argv[])
     //while(!ros::ok());
     marker_pub.publish(pose);
     marker_pub.publish(landmark_location);
-    ros::Duration(1).sleep();
+    ros::Duration(2).sleep();
 
     VisualOdometry visualOdometry;
     visualOdometry.Initialize();

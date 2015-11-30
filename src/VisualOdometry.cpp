@@ -204,7 +204,7 @@ void VisualOdometry::MatchStereoFeatures(std::vector <cv::KeyPoint> keyPointSet_
                         +pow(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0),2);
 
         if((dist < inlier_threshold)&&(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0)>0)
-        &&(range_<125)) {
+        &&(range_<64)) {
             int new_i = static_cast<int>(inliers1.size());
             inliers1.push_back(matched1[i]);
             inliers2.push_back(matched2[i]);
@@ -612,13 +612,16 @@ void VisualOdometry::Start_SAM()
             /** triangulate the landmark */
 
             cv::Mat current_R(3,3,CV_32FC1);
-            Sam::gtsam2cvR(current_pose.rotation(),current_R);
+            Sam::gtsam2cvR(current_pose.rotation().inverse(),current_R);
             cv::Mat current_t(3,1,CV_32FC1);
             cv::Mat current_t_r(3,1,CV_32FC1);
-            gtsam::Point3 baseline(-camera_model.baseline,0,0);
+            cv::Mat baseline = (cv::Mat_<float>(3,1) << -camera_model.baseline, 0, 0);
 
             Sam::gtsam2cvT(current_pose.translation(),current_t);
-            Sam::gtsam2cvT(current_pose.translation()+current_pose.rotation()*baseline,current_t_r);
+
+            current_t = -current_R*current_t;
+            current_t_r = current_R*baseline+current_t;
+            //Sam::gtsam2cvT(current_pose.rotation().transpose()*baseline-current_pose.rotation().transpose()*current_pose.translation(),current_t_r);
 
             cv::Mat rt_l, rt_r;
             cv::hconcat(current_R, current_t, rt_l);
