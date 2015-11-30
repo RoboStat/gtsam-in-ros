@@ -199,10 +199,12 @@ void VisualOdometry::MatchStereoFeatures(std::vector <cv::KeyPoint> keyPointSet_
         camera_matrix_r = camera_model.intrinsic*rt_r;
         cv::triangulatePoints(camera_matrix_l, camera_matrix_r, points_last_l, points_last_r, points_last_4D);
 
-
+        double range_= pow(points_last_4D.at<float>(0,0)/points_last_4D.at<float>(3,0),2)
+                        +pow(points_last_4D.at<float>(1,0)/points_last_4D.at<float>(3,0),2)
+                        +pow(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0),2);
 
         if((dist < inlier_threshold)&&(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0)>0)
-        &&(pow(points_last_4D.at<float>(0,0)/points_last_4D.at<float>(3,0),2)+pow(points_last_4D.at<float>(1,0)/points_last_4D.at<float>(3,0),2)<100)) {
+        &&(range_<125)) {
             int new_i = static_cast<int>(inliers1.size());
             inliers1.push_back(matched1[i]);
             inliers2.push_back(matched2[i]);
@@ -473,7 +475,7 @@ void VisualOdometry::MotionEstimation(std::vector <int> landmarkInd,std::vector<
     Point3 current_t = last_pose.translation()+last_pose.rotation()*Sam::cv2gtsamR(R_new_incremental).transpose()*(-gtsam_t);
 
     sam_.initial_estimate.insert(Symbol('x',camera_R.size()),Pose3(current_R,current_t));
-    noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(0.1),Vector3::Constant(0.05))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+    noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(0.1),Vector3::Constant(0.01))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
 
     Rot3 rot_=Sam::cv2gtsamR(camera_R[0]);
     Point3 trans_;
