@@ -204,7 +204,7 @@ void VisualOdometry::MatchStereoFeatures(std::vector <cv::KeyPoint> keyPointSet_
                         +pow(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0),2);
 
         if((dist < inlier_threshold)&&(points_last_4D.at<float>(2,0)/points_last_4D.at<float>(3,0)>0)
-        &&(range_<64)) {
+        &&(range_<125)) {
             int new_i = static_cast<int>(inliers1.size());
             inliers1.push_back(matched1[i]);
             inliers2.push_back(matched2[i]);
@@ -275,18 +275,19 @@ void VisualOdometry::FindFeatures(cv::Mat image,
 //    detector->setPatchSize(5);
     int thresh = 1;
     detector->setEdgeThreshold(thresh);
-    detector->setPatchSize(9);
+    detector->setPatchSize(11);
     //detector->detectAndCompute(image,cv::noArray(), keypoints, dscp);
     vector<cv::Point2f> corners;
-    goodFeaturesToTrack(image, corners, number, 0.001, 5,cv::noArray(),9);
+    //goodFeaturesToTrack(image, corners, number, 0.001, 5,cv::noArray(),11);
 
 
     for(auto pt_=corners.begin();pt_!=corners.end();++pt_)
     {
-        keypoints.push_back(cv::KeyPoint(*pt_,9));
+        keypoints.push_back(cv::KeyPoint(*pt_,11));
     }
 
-    detector->detectAndCompute(image,cv::noArray(), keypoints, dscp,true);
+    //detector->detectAndCompute(image,cv::noArray(), keypoints, dscp,true);
+    detector->detectAndCompute(image,cv::noArray(), keypoints, dscp,false);
     /*
     while((keypoints.size()<100)&&(thresh>1))
     {
@@ -344,8 +345,8 @@ void VisualOdometry::TrackFeatures(std::vector <Landmark>& active_landmarks, cv:
     }
     Mat status_l, err_l, status_r, err_r;
 
-    calcOpticalFlowPyrLK(i_l_last, i_l, kp_l_last, kp_l, status_l, err_l, Size(9,9),8);
-    calcOpticalFlowPyrLK(i_r_last, i_r, kp_r_last, kp_r, status_r, err_r, Size(9,9),8);
+    calcOpticalFlowPyrLK(i_l_last, i_l, kp_l_last, kp_l, status_l, err_l, Size(11,11),5);
+    calcOpticalFlowPyrLK(i_r_last, i_r, kp_r_last, kp_r, status_r, err_r, Size(11,11),5);
 
 #if DEBUG
     std::cout << err_l.size() << std::endl;
@@ -403,6 +404,7 @@ void VisualOdometry::InitializeMotionEstimation()
         Sam::cv2gtsamT(camera_t.back(),trans_);
         cout<<"add initial pose"<<endl;
         sam_.initial_estimate.insert(Symbol('x', 0), Pose3(rot_,trans_));
+        sam_.initial_estimate_history.insert(Symbol('x', 0), Pose3(rot_,trans_));
         noiseModel::Diagonal::shared_ptr poseNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(0.01),Vector3::Constant(0.005))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
         sam_.graph.push_back(PriorFactor<Pose3>(Symbol('x', 0), Pose3(rot_,trans_), poseNoise));
     }
@@ -458,7 +460,9 @@ void VisualOdometry::MotionEstimation(std::vector <int> landmarkInd,std::vector<
 
 
     std::vector <double> distCoeffs;
-    cv::Mat pnpInliers;
+    //cv::Mat pnpInliers;
+    std::vector<int> pnpInliers;
+
     cv::solvePnPRansac (points_last_3D, points_current_l, camera_model.intrinsic, distCoeffs, R_new_q, t_new_incremental, false, 100, 1.0, 0.98, pnpInliers);
     cv::Rodrigues(R_new_q, R_new_incremental);
     R_new_incremental.convertTo(R_new_incremental, CV_32F);
@@ -466,6 +470,13 @@ void VisualOdometry::MotionEstimation(std::vector <int> landmarkInd,std::vector<
     camera_R_incremental.push_back(R_new_incremental);
     camera_t_incremental.push_back(t_new_incremental);
 
+    std::vector <int> landmarkInd_new;
+    for(size_t i=0; i<pnpInliers.size();++i)
+    {
+        landmarkInd_new.push_back(landmarkInd[pnpInliers[i]]);
+    }
+    landmarkInd.clear();
+    landmarkInd=landmarkInd_new;
     /** This paret is for updating the gtsam graph */
 
     Point3 gtsam_t;
@@ -475,13 +486,17 @@ void VisualOdometry::MotionEstimation(std::vector <int> landmarkInd,std::vector<
     Point3 current_t = last_pose.translation()+last_pose.rotation()*Sam::cv2gtsamR(R_new_incremental).transpose()*(-gtsam_t);
 
     sam_.initial_estimate.insert(Symbol('x',camera_R.size()),Pose3(current_R,current_t));
-    noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(0.1),Vector3::Constant(0.01))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+    sam_.initial_estimate_history.insert(Symbol('x',camera_R.size()),Pose3(current_R,current_t));
+    noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(0.05),Vector3::Constant(0.1))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+    noiseModel::Diagonal::shared_ptr poseNoise = noiseModel::Diagonal::Sigmas((Vector(6) << Vector3::Constant(1),Vector3::Constant(1))); // 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+    sam_.graph.push_back(PriorFactor<Pose3>(Symbol('x', camera_R.size()), Pose3(current_R,current_t), poseNoise));
+
 
     Rot3 rot_=Sam::cv2gtsamR(camera_R[0]);
     Point3 trans_;
     Sam::cv2gtsamT(camera_t[0],trans_);
     Pose3 priorMean=Pose3(rot_,trans_);
-    sam_.graph.add(BetweenFactor<Pose3>(Symbol('x',camera_R.size()-1),Symbol('x',camera_R.size()), priorMean, priorNoise));
+    //sam_.graph.add(BetweenFactor<Pose3>(Symbol('x',camera_R.size()-1),Symbol('x',camera_R.size()), priorMean, priorNoise));
 
 
 
@@ -516,7 +531,6 @@ void VisualOdometry::Start_SAM()
             active_landmarks.push_back(landmarks[landmarkMap[num_of_frame-2][i]]);
         }
     }
-
     std::vector <int> remain_landmarks;
     TrackFeatures( active_landmarks, image_l, image_l_last, image_r, image_r_last, remain_landmarks);
 
@@ -534,7 +548,7 @@ void VisualOdometry::Start_SAM()
         key_frames.push_back(num_of_frame);
 
         std::vector <int> landmarksInd_withNewLandmarks (landmarkInd.begin(), landmarkInd.end());
-        FindNewLandmarks(newLandmarksInd, (MIN_NUM_LANDMARKS-remain_landmarks.size())/9);
+        FindNewLandmarks(newLandmarksInd, (MIN_NUM_LANDMARKS-remain_landmarks.size())/5);
         for(size_t i = 0; i<newLandmarksInd.size(); ++i)
         {
             landmarks[newLandmarksInd[i]].traceFrameNum.push_back(num_of_frame);
@@ -545,7 +559,6 @@ void VisualOdometry::Start_SAM()
     else {
         landmarkMap.push_back(landmarkInd);
     }
-
     // Triangulation and motion estimation
     if (num_of_frame == 1) InitializeMotionEstimation();
     else MotionEstimation(landmarkInd,newLandmarksInd);
@@ -652,13 +665,9 @@ void VisualOdometry::Start_SAM()
             }
 
             sam_.initial_estimate.insert(Symbol('l',ind),pt);
-
-
-            if(sam_.initial_estimate.filter<Point3>().size()==1)
-            {
-                noiseModel::Isotropic::shared_ptr pointNoise = noiseModel::Isotropic::Sigma(3, 1);
-                //sam_.graph.push_back(gtsam::PriorFactor<Point3>(Symbol('l', 0), Point3(-1.00617,-1.05097,1.52994), pointNoise));
-            }
+            sam_.initial_estimate_history.insert(Symbol('l',ind),pt);
+            noiseModel::Isotropic::shared_ptr pointNoise = noiseModel::Isotropic::Sigma(3, 1);
+            sam_.graph.push_back(gtsam::PriorFactor<Point3>(Symbol('l', ind), pt, pointNoise));
 
             for(size_t history=0; history<landmarks[ind].traceFrameNum.size(); ++history)
             {
@@ -705,35 +714,35 @@ void VisualOdometry::Start_SAM()
 
     //if (num_of_frame%5==0)//((key_frames.back()==num_of_frame)&&(num_of_frame!=1))
     //{
-        cout<<"Total number of initial estimate:"<<sam_.initial_estimate.filter<Point3>().size()<<endl;
-        LevenbergMarquardtParams params_;
-        params_.minModelFidelity=1e-5;
+        cout<<"Total number of initial estimate:"<<sam_.initial_estimate.size()<<endl;
+        //LevenbergMarquardtParams params_;
+        //params_.minModelFidelity=1e-5;
 
-        LevenbergMarquardtOptimizer optimizer = LevenbergMarquardtOptimizer(sam_.graph, sam_.initial_estimate);
+        //LevenbergMarquardtOptimizer optimizer = LevenbergMarquardtOptimizer(sam_.graph, sam_.initial_estimate);
         //optimizer.params()=params_;
         cout<<"optimizing..."<<endl;
 
-        Values new_estimate = optimizer.optimize();
+        //Values new_estimate = optimizer.optimize();
         //sam_.graph.print();
         //Values res=sam_.initial_estimate.filter<Pose3>();
         //res.print();
 
 
         //cout<<sam_.graph.linearize(sam_.initial_estimate)->augmentedJacobian()<<endl;
-        //sam_.isam.update(sam_.graph, sam_.initial_estimate);
-        //sam_.isam.update();
-        //Values new_estimate = sam_.isam.calculateEstimate();
+        sam_.isam.update(sam_.graph, sam_.initial_estimate);
+        sam_.isam.update();
+        Values new_estimate = sam_.isam.calculateEstimate();
 
-        sam_.initial_estimate.update(new_estimate);
+        //sam_.initial_estimate.update(new_estimate);
         //current_pose = sam_.initial_estimate.at<Pose3>(Symbol('x',num_of_frame-1)); // pull the last pose out using the size the R matrix;
         //cout<<"GTSAM pose:"<<endl;
         //cout<<current_pose<<endl;
         //cout<<"Total number of new estimate:"<<new_estimate.size()<<endl;
         //cout<<"Total number of History estimate:"<<sam_.initial_estimate_history.size()<<endl;
         //sam_.initial_estimate_history.insert(sam_.initial_estimate);
-        //sam_.initial_estimate_history=new_estimate;
-        //sam_.graph.resize(0);
-        //sam_.initial_estimate.clear();
+        sam_.initial_estimate_history=new_estimate;
+        sam_.graph.resize(0);
+        sam_.initial_estimate.clear();
     //}
     VisualizeLandmarks(image_l, image_r, active_landmarks);
 

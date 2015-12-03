@@ -41,7 +41,7 @@ class Sam
 friend class VisualOdometry;
 public:
     Sam():
-        parameters(ISAM2GaussNewtonParams(),0.01,1,true,false,ISAM2Params::CHOLESKY,true, DefaultKeyFormatter),
+        parameters(ISAM2GaussNewtonParams(),0.1,1,true,false,ISAM2Params::CHOLESKY,true, DefaultKeyFormatter),
         isam(parameters),
         K(new Cal3_S2Stereo(164.25,164.25,0,213.5,118.43,0.162))
     {
@@ -77,7 +77,7 @@ public:
     }
     const Values getInitialEstimate() const
     {
-        return initial_estimate;
+        return initial_estimate_history;
     }
 private:
     Values initial_estimate;
@@ -87,7 +87,7 @@ private:
     ISAM2Params parameters;
     ISAM2 isam;
     const Cal3_S2Stereo::shared_ptr K;//=Cal3_S2Stereo(164.25,164.25,0,213.5,118.43,0.162);
-    const noiseModel::Isotropic::shared_ptr model = noiseModel::Isotropic::Sigma(3,10);
+    const noiseModel::Isotropic::shared_ptr model = noiseModel::Isotropic::Sigma(3,20);
 };
 
 #endif /** SAM_H_ */

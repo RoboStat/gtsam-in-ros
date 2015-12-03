@@ -27,7 +27,7 @@ class VisualOdometry
         virtual ~VisualOdometry();
 
         void Initialize();
-        void FindNewLandmarks(std::vector <int>& newLandmarksInd,size_t number = 200);
+        void FindNewLandmarks(std::vector <int>& newLandmarksInd,size_t number = 100);
         void ReadNextFrame();
         void TrackFeatures(std::vector <Landmark>& lms, cv::Mat i_l, cv::Mat i_l_last,
                            cv::Mat i_r, cv::Mat i_r_last, std::vector <int>& remain_landmarks);
